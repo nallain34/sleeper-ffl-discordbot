@@ -19,6 +19,7 @@ from sleeper_bot_commands import (
     manage,
     patron,
     user,
+    ai_commands,
 )
 
 if os.path.exists("env.py"):
@@ -40,6 +41,7 @@ intents = discord.Intents.default()
 intents.members = True
 bot = discord.AutoShardedBot(intents=intents)
 
+GUILD = [872144892829261835]
 
 # Bot Events
 
@@ -55,34 +57,20 @@ async def on_ready():
         )
     )
     scheduler = AsyncIOScheduler(timezone="America/New_York")
-    trigger_one = OrTrigger([CronTrigger(day_of_week="thu", hour=15)])
-    trigger_two = OrTrigger([CronTrigger(hour=4)])
+    trigger_one   = OrTrigger([CronTrigger(day_of_week="thu", hour=15)])
+    trigger_two   = OrTrigger([CronTrigger(hour=4)])
     trigger_three = OrTrigger([CronTrigger(day_of_week="tue", hour=12)])
-    trigger_four = OrTrigger([CronTrigger(day_of_week="tue", hour=11)])
-    trigger_five = OrTrigger([CronTrigger(day_of_week="wed", hour=11)])
-    trigger_six = OrTrigger([CronTrigger(day_of_week="thu", hour=11)])
-    scheduler.add_job(
-        scheduled_jobs.get_current_matchups, trigger_one, [bot], misfire_grace_time=None
-    )
-    scheduler.add_job(
-        scheduled_jobs.refresh_players, trigger_two, misfire_grace_time=None
-    )
-    scheduler.add_job(
-        scheduled_jobs.get_current_scoreboard,
-        trigger_three,
-        [bot],
-        misfire_grace_time=None,
-    )
-    scheduler.add_job(
-        scheduled_jobs.send_waiver_clear, trigger_four, [bot], misfire_grace_time=None
-    )
-    scheduler.add_job(
-        scheduled_jobs.send_waiver_clear, trigger_five, [bot], misfire_grace_time=None
-    )
-    scheduler.add_job(
-        scheduled_jobs.send_waiver_clear, trigger_six, [bot], misfire_grace_time=None
-    )
+    trigger_four  = OrTrigger([CronTrigger(day_of_week="tue", hour=11)])
+    trigger_five  = OrTrigger([CronTrigger(day_of_week="wed", hour=11)])
+    trigger_six   = OrTrigger([CronTrigger(day_of_week="thu", hour=11)])
+    scheduler.add_job(scheduled_jobs.get_current_matchups, trigger_one,   [bot], misfire_grace_time=None)
+    scheduler.add_job(scheduled_jobs.refresh_players,      trigger_two,         misfire_grace_time=None)
+    scheduler.add_job(scheduled_jobs.get_current_scoreboard, trigger_three, [bot], misfire_grace_time=None)
+    scheduler.add_job(scheduled_jobs.send_waiver_clear,    trigger_four,  [bot], misfire_grace_time=None)
+    scheduler.add_job(scheduled_jobs.send_waiver_clear,    trigger_five,  [bot], misfire_grace_time=None)
+    scheduler.add_job(scheduled_jobs.send_waiver_clear,    trigger_six,   [bot], misfire_grace_time=None)
     scheduler.start()
+    await ai_commands.preload_username_cache(bot)
 
 
 ## On Guild Join - Message
@@ -515,9 +503,7 @@ async def find_user(ctx, *, member):
                 user = await bot.fetch_user(user_id)
                 shared_guilds = [guild for guild in bot.guilds if user in guild.members]
                 if shared_guilds:
-                    await ctx.respond(
-                        f"{member} - {shared_guilds[0].id}", ephemeral=True
-                    )
+                    await ctx.respond(f"{member} - {shared_guilds[0].id}", ephemeral=True)
                 else:
                     await ctx.respond("No shared guilds found.", ephemeral=True)
             except:
@@ -528,9 +514,7 @@ async def find_user(ctx, *, member):
                 user = await bot.fetch_user(user_id)
                 shared_guilds = [guild for guild in bot.guilds if user in guild.members]
                 if shared_guilds:
-                    await ctx.respond(
-                        f"{member} - {shared_guilds[0].id}", ephemeral=True
-                    )
+                    await ctx.respond(f"{member} - {shared_guilds[0].id}", ephemeral=True)
                 else:
                     await ctx.respond("No shared guilds found.", ephemeral=True)
             except:
@@ -541,7 +525,6 @@ async def find_user(ctx, *, member):
 
 ## Patron Commands
 
-
 ### Waiver Order Command
 
 
@@ -549,10 +532,7 @@ async def find_user(ctx, *, member):
     name="waiver-order",
     description="Returns current waiver order. Must run add-league first. Patron only.",
 )
-@option(
-    "ephemeral",
-    description="Select whether or not you'd like the response to be viewable to just you.",
-)
+@option("ephemeral", description="Select whether or not you'd like the response to be viewable to just you.")
 async def waiver_order(ctx, ephemeral: bool):
     message = patron.waiver_order(ctx, bot)
     if type(message) is str:
@@ -568,14 +548,8 @@ async def waiver_order(ctx, ephemeral: bool):
     name="transactions",
     description="Returns last 10 transactions for a given week. Must run add-league first. Patron only.",
 )
-@option(
-    "ephemeral",
-    description="Select whether or not you'd like the response to be viewable to just you.",
-)
-@option(
-    "week",
-    description="Please enter the week number you'd like to view transactions for.",
-)
+@option("ephemeral", description="Select whether or not you'd like the response to be viewable to just you.")
+@option("week", description="Please enter the week number you'd like to view transactions for.")
 async def transactions(ctx, ephemeral: bool, week: str):
     message = patron.transactions(ctx, bot, week)
     if type(message) is str:
@@ -591,27 +565,11 @@ async def transactions(ctx, ephemeral: bool, week: str):
     name="ngs",
     description="Returns next gen stats given the kind of stat, player, year, and week. For yearly stats, use week 0.",
 )
-@option(
-    "ephemeral",
-    description="Select whether or not you'd like the response to be viewable to just you.",
-)
-@option(
-    "kind",
-    description="Please select the kind of Next Gen Stats you'd like to view for this player.",
-    choices=["passing", "rushing", "receiving"],
-)
-@option(
-    "player",
-    description="Please enter the player name that you'd like to view Next Gen Stats for.",
-)
-@option(
-    "year",
-    description="Please enter the year you'd like to view these stats for. Valid back through 2016.",
-)
-@option(
-    "week",
-    description="Please enter the week you'd like to view these stats for. Use 0 for season stats.",
-)
+@option("ephemeral", description="Select whether or not you'd like the response to be viewable to just you.")
+@option("kind", description="Please select the kind of Next Gen Stats you'd like to view for this player.", choices=["passing", "rushing", "receiving"])
+@option("player", description="Please enter the player name that you'd like to view Next Gen Stats for.")
+@option("year", description="Please enter the year you'd like to view these stats for. Valid back through 2016.")
+@option("week", description="Please enter the week you'd like to view these stats for. Use 0 for season stats.")
 async def ngs(ctx, ephemeral: bool, kind: str, player: str, year: int, week: int):
     message = patron.ngs(ctx, bot, kind, player, year, week)
     if type(message) is str:
@@ -627,23 +585,10 @@ async def ngs(ctx, ephemeral: bool, kind: str, player: str, year: int, week: int
     name="box-score",
     description="Returns the box score given the kind of stat, player, year, and week.",
 )
-@option(
-    "ephemeral",
-    description="Select whether or not you'd like the response to be viewable to just you.",
-)
-@option(
-    "kind",
-    description="Please select the kind of stats you'd like to view for this player.",
-    choices=["passing", "rushing", "receiving"],
-)
-@option(
-    "player",
-    description="Please enter the player name that you'd like to view Next Gen Stats for.",
-)
-@option(
-    "year",
-    description="Please enter the year you'd like to view these stats for. Valid back through 1999.",
-)
+@option("ephemeral", description="Select whether or not you'd like the response to be viewable to just you.")
+@option("kind", description="Please select the kind of stats you'd like to view for this player.", choices=["passing", "rushing", "receiving"])
+@option("player", description="Please enter the player name that you'd like to view Next Gen Stats for.")
+@option("year", description="Please enter the year you'd like to view these stats for. Valid back through 1999.")
 @option("week", description="Please enter the week you'd like to view these stats for.")
 async def box_score(ctx, ephemeral: bool, kind: str, player: str, year: int, week: int):
     message = patron.box_score(ctx, bot, kind, player, year, week)
@@ -658,16 +603,64 @@ async def box_score(ctx, ephemeral: bool, kind: str, player: str, year: int, wee
 ### Bot Info Command
 
 
-@bot.slash_command(
-    name="bot-info", description="Returns bot information and important messages."
-)
-@option(
-    "ephemeral",
-    description="Select whether or not you'd like the response to be viewable to just you.",
-)
+@bot.slash_command(name="bot-info", description="Returns bot information and important messages.")
+@option("ephemeral", description="Select whether or not you'd like the response to be viewable to just you.")
 async def bot_info(ctx, ephemeral: bool):
     message = help.help(bot)
     await ctx.respond(embed=message, ephemeral=ephemeral)
+
+
+## AI Commands
+
+### Roast Command
+
+@bot.slash_command(name="roast", description="Roasts one or more league managers. Brutally.", guild_ids=GUILD)
+@option("username",  description="Select the first manager to roast.",            autocomplete=ai_commands.get_league_usernames)
+@option("username2", description="Optional: second manager to roast.",  required=False, default=None, autocomplete=ai_commands.get_league_usernames)
+@option("username3", description="Optional: third manager to roast.",   required=False, default=None, autocomplete=ai_commands.get_league_usernames)
+async def roast(ctx, username: str, username2: str = None, username3: str = None):
+    await ctx.defer()
+    usernames = [u for u in [username, username2, username3] if u]
+    message = await ai_commands.roast_manager(ctx, bot, usernames)
+    parts = message.split("\n\n---\n\n")
+    await ctx.respond(parts[0][:2000])
+    for part in parts[1:]:
+        await ctx.followup.send(part[:2000])
+
+
+### Recap Command
+
+@bot.slash_command(name="recap", description="AI-generated weekly recap.", guild_ids=GUILD)
+@option("week", description="Week number. Defaults to last completed week.", required=False, default=None)
+async def recap(ctx, week: str):
+    await ctx.defer()
+    message = await ai_commands.weekly_recap(ctx, bot, week)
+    await ctx.respond(message[:2000])
+
+
+### Power Rankings Command
+
+@bot.slash_command(name="power-rankings", description="Current power rankings with commentary.", guild_ids=GUILD)
+async def power_rankings_cmd(ctx):
+    await ctx.defer()
+    message = await ai_commands.power_rankings(ctx, bot)
+    await ctx.respond(message[:2000])
+
+
+### League Roast Command
+
+@bot.slash_command(name="roast-league", description="Roasts every team in the league. Nobody escapes.", guild_ids=GUILD)
+async def roast_league_cmd(ctx):
+    await ctx.defer()
+    message = await ai_commands.roast_league(ctx, bot)
+    # Split into chunks if needed
+    if len(message) <= 2000:
+        await ctx.respond(message)
+    else:
+        chunks = [message[i:i+2000] for i in range(0, len(message), 2000)]
+        await ctx.respond(chunks[0])
+        for chunk in chunks[1:]:
+            await ctx.followup.send(chunk)
 
 
 # Bot Run
