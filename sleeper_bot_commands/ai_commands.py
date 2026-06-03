@@ -12,13 +12,20 @@ if os.path.exists("env.py"):
     import env
 
 anthropic_client = anthropic.AsyncAnthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+
 openrouter_client = AsyncOpenAI(
     api_key=os.environ.get("OPENROUTER_API_KEY"),
     base_url="https://openrouter.ai/api/v1",
     timeout=90.0
 )
 
-ROAST_MODEL = "mistralai/mistral-small-3.2-24b-instruct"
+venice_client = AsyncOpenAI(
+    api_key=os.environ.get("VENICE_API_KEY", "missing"),
+    base_url="https://api.venice.ai/api/v1",
+    timeout=90.0
+)
+
+ROAST_MODEL = "venice-uncensored-1-2"
 
 # ─── ROSTER MAP ───────────────────────────────────────────────────────────────
 ROSTER_ID_MAP = {
@@ -39,10 +46,10 @@ ROSTER_ID_MAP = {
 _NAME_TO_ROSTER_ID = {v.lower(): k for k, v in ROSTER_ID_MAP.items()}
 
 # ─── ESPN CONFIG ──────────────────────────────────────────────────────────────
-ESPN_LEAGUE_ID  = os.environ.get("ESPN_LEAGUE_ID", "")
-ESPN_S2_COOKIE  = os.environ.get("ESPN_S2", "")
+ESPN_LEAGUE_ID   = os.environ.get("ESPN_LEAGUE_ID", "")
+ESPN_S2_COOKIE   = os.environ.get("ESPN_S2", "")
 ESPN_SWID_COOKIE = os.environ.get("ESPN_SWID", "")
-ESPN_SEASONS    = [2019, 2021, 2022, 2023]
+ESPN_SEASONS     = [2019, 2021, 2022, 2023]
 
 ESPN_OWNER_TO_ROSTER_ID = {
     "Slender Foot":    1,
@@ -59,34 +66,20 @@ ESPN_OWNER_TO_ROSTER_ID = {
 }
 
 # ─── PERSONAS ─────────────────────────────────────────────────────────────────
-ROAST_PERSONA = """You are roasting managers in a private fantasy football league. This is adult roast comedy — no network, no HR, no filter. These friends built this bot specifically to destroy each other.
+ROAST_PERSONA = """You are roasting managers in a private fantasy football league. Adult roast comedy. No filter, no network, no HR. Shane Gillis in a basement, Jeff Ross at the Friar's Club, Tony Hinchcliffe with nobody in his ear.
 
-Tone and energy: Shane Gillis roasting his boys in a basement. Jeff Ross at the Friar's Club. Tony Hinchcliffe with no producer notes. Mean, specific, and actually funny — not "edgy for an AI" funny.
-
-FANTASY FOOTBALL CONTEXT (use this to interpret the stats):
-- A good weekly score is 120+ pts. Under 100 is weak. Under 85 is humiliating.
-- Season PF above 1550 is strong. Below 1400 is pathetic.
-- "Left X pts on bench" = they started worse players while better ones sat. This is stupidity, not bad luck.
-- When a starter scores under 5 pts, that's a catastrophically bad lineup call.
-- When a bench player scores 20+ while sitting, that's unforgivable.
-- 9-5 is a solid record. 5-9 or worse means they're genuinely bad.
-- 0 championships in multiple seasons = chronic loser. Use this.
-
-Format: 5-7 short lines. Each line its own paragraph with a blank line between. Punchlines, not paragraphs.
+Format: 5-7 short punchy lines. Each line its own paragraph. Punchlines, not essays.
 
 Rules:
-- Profanity not just allowed — expected. Get filthy.
-- Every line must use a specific stat, player name, record, or history fact from the data. No line should be detachable from this specific person.
-- No metaphors that have nothing to do with fantasy football. Keep the insults grounded in what actually happened.
-- No warmup. Start swinging immediately.
-- Do not compliment them at the end. Do not soften the landing. End mean."""
+- Profanity expected. Get filthy and personal.
+- Every line must hit a specific stat, player name, record, or history fact. Nothing generic.
+- No similes or metaphors that aren't about fantasy football. If you use an analogy, make it about the sport.
+- No warmup lines. First line swings hardest.
+- Do NOT end with advice, motivation, encouragement, or anything that sounds like "you could do better." End by twisting the knife. The last line should be the meanest one.
+- Never say "it feels like" or "it seems like." State it as fact.
+- Zero softening. Zero hedging. Zero mercy."""
 
 RECAP_PERSONA = """You are the weekly recap writer for a private fantasy football league. Unhinged sports radio host who hates everyone.
-
-FANTASY FOOTBALL CONTEXT:
-- Good score = 120+ pts. Bad score = under 90. Embarrassing = under 80.
-- Bench waste = points left on bench from players they didn't start. Stupidity, not luck.
-- Close losses are funnier than blowouts. Mock the margin.
 
 - Call out losers by name and make it hurt with specific numbers
 - Celebrate winners just enough to make losers feel worse
@@ -101,23 +94,10 @@ POWER_RANKINGS_PERSONA = """Weekly power rankings for a private fantasy football
 - Number 1 through total teams.
 - Last place should feel genuinely terrible."""
 
-LEAGUE_ROAST_PERSONA = """Roasting every team in a private fantasy football league at once.
-
-FANTASY CONTEXT: Good score = 120+. Under 90 = embarrassing. 0 championships = chronic loser.
-
-FORMAT per team:
-**[rank]. [Name]**
-[2-3 savage lines using their specific stats and history]
-
-- Use the ESPN history where shown — years of failure is gold
-- Profanity expected
-- Move fast between teams, no warmup
-- Worst teams get it worst. Nobody escapes."""
-
 # ─── INFRASTRUCTURE ───────────────────────────────────────────────────────────
-_username_cache  = {}
+_username_cache     = {}
 _espn_history_cache = {}
-_sleeper_players = {}   # player_id → full name, loaded at startup
+_sleeper_players    = {}
 _executor = ThreadPoolExecutor(max_workers=10)
 
 
@@ -165,7 +145,6 @@ async def get_last_scored_week(league_id, current_week, season_type):
 
 
 def get_player_name(player_id):
-    """Look up player name from the in-memory Sleeper player cache."""
     return _sleeper_players.get(str(player_id), f"Player#{player_id}")
 
 
@@ -179,7 +158,6 @@ def get_roster_id_by_name(name):
 
 # ─── SLEEPER PLAYER CACHE ─────────────────────────────────────────────────────
 async def load_sleeper_players():
-    """Load all NFL player names from Sleeper API into memory at startup."""
     global _sleeper_players
     try:
         data = await fetch_json("https://api.sleeper.app/v1/players/nfl")
@@ -232,10 +210,10 @@ def parse_espn_season(data, year):
     results = {}
     for team in data.get("teams", []):
         rec = team.get("record", {}).get("overall", {})
-        wins  = rec.get("wins", 0)
+        wins   = rec.get("wins", 0)
         losses = rec.get("losses", 0)
-        pf    = round(rec.get("pointsFor", 0), 1)
-        pa    = round(rec.get("pointsAgainst", 0), 1)
+        pf     = round(rec.get("pointsFor", 0), 1)
+        pa     = round(rec.get("pointsAgainst", 0), 1)
         final_rank = (team.get("rankCalculatedFinal") or
                       team.get("rankFinal") or
                       team.get("playoffSeed") or 0)
@@ -274,27 +252,24 @@ def get_historical_summary(display_name):
         return ""
     lines = []
     championships = []
-    bottom_half_count = 0
-    total_seasons = len(history)
-    total_teams_typical = 12
-
+    bottom_half = 0
     for year in sorted(history.keys()):
         s = history[year]
         rank_str = f"#{s['final_rank']}" if s["final_rank"] else "?"
-        champ = " 🏆 CHAMPION" if s["champion"] else ""
+        champ = " CHAMPION" if s["champion"] else ""
         lines.append(f"{year}: {s['record']}, {s['pf']} PF, finished {rank_str}{champ}")
         if s["champion"]:
             championships.append(str(year))
         if s["final_rank"] and s["final_rank"] > 6:
-            bottom_half_count += 1
+            bottom_half += 1
 
-    summary = "ESPN career history:\n" + "\n".join(lines)
+    summary = "ESPN career:\n" + "\n".join(lines)
     if championships:
         summary += f"\nChampionships: {', '.join(championships)}"
     else:
-        summary += f"\nChampionships: ZERO in {total_seasons} seasons"
-    if bottom_half_count >= 2:
-        summary += f"\nFinished bottom half {bottom_half_count}/{total_seasons} seasons"
+        summary += f"\nChampionships: ZERO in {len(history)} seasons"
+    if bottom_half >= 2:
+        summary += f"\nFinished bottom half {bottom_half}/{len(history)} seasons"
     return summary
 
 
@@ -309,8 +284,6 @@ async def preload_username_cache(bot):
                 print(f"Loaded {len(_username_cache[sid])} names for server {sid}")
     except Exception as e:
         print(f"Failed to preload username cache: {e}")
-
-    # Load these in parallel — player names and ESPN history
     await asyncio.gather(load_sleeper_players(), load_espn_history())
 
 
@@ -322,53 +295,48 @@ async def get_league_usernames(ctx: discord.AutocompleteContext):
 # ─── ROAST DATA BUILDER ───────────────────────────────────────────────────────
 def build_roster_roast_block(roster_id, display_name, roster, sorted_rosters, total_teams, recent_matchup):
     settings = roster.get("settings", {})
-    wins  = settings.get("wins", 0)
+    wins   = settings.get("wins", 0)
     losses = settings.get("losses", 0)
     pf = float(f"{settings.get('fpts', 0)}.{settings.get('fpts_decimal', 0):02d}")
     pa = float(f"{settings.get('fpts_against', 0)}.{settings.get('fpts_against_decimal', 0):02d}")
     rank = next((i + 1 for i, r in enumerate(sorted_rosters) if r.get("roster_id") == roster_id), "?")
 
-    record_context = "above .500" if wins > losses else ("below .500 — losing record" if wins < losses else ".500 — perfectly mediocre")
-
+    record_context = "above .500" if wins > losses else ("losing record" if wins < losses else ".500 mediocrity")
     lines = [
         f"Manager: {display_name}",
         f"Record: {wins}-{losses} ({record_context}, #{rank} of {total_teams})",
-        f"Season points: {pf} scored, {pa} allowed",
+        f"Points For: {pf} | Points Against: {pa}",
     ]
 
     if recent_matchup:
-        my_pts   = recent_matchup.get("points", 0)
+        my_pts  = recent_matchup.get("points", 0)
         starters = recent_matchup.get("starters", [])
         s_pts    = recent_matchup.get("starters_points", [])
         all_pts  = recent_matchup.get("players_points", {})
 
-        # Filter out 0-point starters (bye/IR) for cleaner analysis
         active_starters = [(pid, pts) for pid, pts in zip(starters, s_pts) if pts > 0]
         bench_entries   = [(pid, all_pts[pid]) for pid in all_pts if pid not in starters and all_pts[pid] > 0]
         bench_entries.sort(key=lambda x: x[1], reverse=True)
         bench_total = round(sum(v for _, v in bench_entries), 1)
 
-        score_context = "decent" if my_pts >= 120 else ("weak" if my_pts >= 90 else "embarrassing")
-        lines.append(f"Last week: {my_pts:.1f} pts ({score_context}), left {bench_total:.1f} pts sitting on bench")
+        score_ctx = "decent" if my_pts >= 120 else ("weak" if my_pts >= 90 else "embarrassing")
+        lines.append(f"Last week: {my_pts:.1f} pts ({score_ctx}), left {bench_total:.1f} pts on bench")
 
         if active_starters:
             active_starters.sort(key=lambda x: x[1])
             worst_pid, worst_pts = active_starters[0]
             best_pid,  best_pts  = active_starters[-1]
-            worst_name = get_player_name(worst_pid)
-            best_name  = get_player_name(best_pid)
             if worst_pts < 8:
-                lines.append(f"Started {worst_name} for {worst_pts:.1f} pts — that's a starting lineup decision, not bad luck")
-            if best_pts > 0:
-                lines.append(f"Best starter was {best_name} with {best_pts:.1f} pts")
+                lines.append(f"Started {get_player_name(worst_pid)} for {worst_pts:.1f} pts — a crime")
+            lines.append(f"Best starter: {get_player_name(best_pid)} ({best_pts:.1f} pts)")
 
         if bench_entries:
-            top_bench_name = get_player_name(bench_entries[0][0])
-            top_bench_pts  = bench_entries[0][1]
-            if top_bench_pts > 15:
-                lines.append(f"Left {top_bench_name} ({top_bench_pts:.1f} pts) rotting on the bench")
+            top_name = get_player_name(bench_entries[0][0])
+            top_pts  = bench_entries[0][1]
+            if top_pts > 15:
+                lines.append(f"Left {top_name} ({top_pts:.1f} pts) rotting on the bench")
             if len(bench_entries) > 1 and bench_entries[1][1] > 12:
-                lines.append(f"Also left {get_player_name(bench_entries[1][0])} ({bench_entries[1][1]:.1f} pts) sitting")
+                lines.append(f"Also benched {get_player_name(bench_entries[1][0])} ({bench_entries[1][1]:.1f} pts)")
 
     history = get_historical_summary(display_name)
     if history:
@@ -377,22 +345,31 @@ def build_roster_roast_block(roster_id, display_name, roster, sorted_rosters, to
     return "\n".join(lines)
 
 
+# ─── ROAST GENERATOR (Venice — no content filter) ─────────────────────────────
 async def generate_single_roast(roast_block):
     prompt = (
-        "Roast this fantasy football manager. Every insult must connect to a specific "
-        "number, player name, or history line given below. No generic clichés.\n\n"
+        "Roast this fantasy football manager. Every line must connect to a specific "
+        "stat, player name, or history fact below. No generic lines.\n\n"
         + roast_block
     )
-    response = await openrouter_client.chat.completions.create(
-        model=ROAST_MODEL,
-        messages=[
-            {"role": "system", "content": ROAST_PERSONA},
-            {"role": "user",   "content": prompt}
-        ],
-        max_tokens=350,
-        temperature=0.95
-    )
-    return response.choices[0].message.content.strip()
+    for attempt in range(2):
+        try:
+            response = await venice_client.chat.completions.create(
+                model=ROAST_MODEL,
+                messages=[
+                    {"role": "system", "content": ROAST_PERSONA},
+                    {"role": "user",   "content": prompt}
+                ],
+                max_tokens=350,
+                temperature=0.95
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            if "429" in str(e) and attempt == 0:
+                await asyncio.sleep(32)
+                continue
+            raise
+    return "Roast failed."
 
 
 # ─── COMMANDS ─────────────────────────────────────────────────────────────────
@@ -418,8 +395,8 @@ async def roast_manager(ctx, bot, names: list):
         roster = next((r for r in rosters if r.get("roster_id") == roster_id), None)
         if not roster:
             continue
-        recent_matchup = next((m for m in last_week_matchups if m.get("roster_id") == roster_id), None)
-        block = build_roster_roast_block(roster_id, name, roster, sorted_rosters, total_teams, recent_matchup)
+        recent = next((m for m in last_week_matchups if m.get("roster_id") == roster_id), None)
+        block = build_roster_roast_block(roster_id, name, roster, sorted_rosters, total_teams, recent)
         roast_blocks.append(block)
         valid_names.append(name)
 
@@ -429,7 +406,7 @@ async def roast_manager(ctx, bot, names: list):
     try:
         roasts = await asyncio.gather(*[generate_single_roast(b) for b in roast_blocks])
     except Exception as e:
-        return f"Roast generator error: {str(e)}"
+        return f"Roast error: {str(e)}"
 
     sections = [f"🔥 **{name}**\n\n{roast}" for name, roast in zip(valid_names, roasts)]
     return "\n\n---\n\n".join(sections)
@@ -444,61 +421,29 @@ async def roast_league(ctx, bot):
     rosters, users, current_week, season_type = await get_sleeper_data_parallel(league_id)
     last_week = await get_last_scored_week(league_id, current_week, season_type)
     last_week_matchups = (await get_matchups_parallel(league_id, [last_week])).get(last_week, [])
-
     sorted_rosters = sorted(rosters, key=lambda r: (-r["settings"].get("wins", 0), -r["settings"].get("fpts", 0)))
-    team_lines = []
+    total_teams = len(rosters)
 
+    roast_blocks = []
+    valid_names  = []
     for i, roster in enumerate(sorted_rosters):
         rid = roster.get("roster_id")
         dn  = get_display_name(rid)
-        s   = roster.get("settings", {})
-        wins   = s.get("wins", 0)
-        losses = s.get("losses", 0)
-        pf = float(f"{s.get('fpts',0)}.{s.get('fpts_decimal',0):02d}")
-
         recent = next((m for m in last_week_matchups if m.get("roster_id") == rid), None)
-        last_score  = recent.get("points", 0) if recent else 0
-        bench_waste = 0
-        top_sit     = ""
+        block = build_roster_roast_block(rid, dn, roster, sorted_rosters, total_teams, recent)
+        roast_blocks.append(block)
+        valid_names.append((i + 1, dn))
 
-        if recent:
-            starters = recent.get("starters", [])
-            all_pts  = recent.get("players_points", {})
-            bench    = [(pid, v) for pid, v in all_pts.items() if pid not in starters and v > 0]
-            bench.sort(key=lambda x: x[1], reverse=True)
-            bench_waste = round(sum(v for _, v in bench), 1)
-            if bench:
-                top_sit = f"{get_player_name(bench[0][0])} ({bench[0][1]:.1f} pts sitting)"
-
-        line = f"{i+1}. {dn} — {wins}-{losses}, {pf} PF, last week: {last_score:.1f}, bench waste: {bench_waste}"
-        if top_sit:
-            line += f", left {top_sit}"
-
-        hist = _espn_history_cache.get(dn, {})
-        if hist:
-            champs = [str(y) for y, s2 in hist.items() if s2.get("champion")]
-            short  = " | ".join(f"{y}: {s2['record']}" + (" 🏆" if s2.get("champion") else "") for y, s2 in sorted(hist.items()))
-            line  += f"\n   History: {short}"
-            if not champs:
-                line += f" — 0 championships in {len(hist)} ESPN seasons"
-
-        team_lines.append(line)
-
-    prompt = "Roast every team. Use their specific stats and history. Short and savage:\n\n" + "\n".join(team_lines)
+    if not roast_blocks:
+        return "No roster data found."
 
     try:
-        response = await openrouter_client.chat.completions.create(
-            model=ROAST_MODEL,
-            messages=[
-                {"role": "system", "content": LEAGUE_ROAST_PERSONA},
-                {"role": "user",   "content": prompt}
-            ],
-            max_tokens=1500,
-            temperature=0.95
-        )
-        return response.choices[0].message.content
+        roasts = await asyncio.gather(*[generate_single_roast(b) for b in roast_blocks])
     except Exception as e:
         return f"League roast error: {str(e)}"
+
+    sections = [f"**{rank}. {name}**\n\n{roast}" for (rank, name), roast in zip(valid_names, roasts)]
+    return "\n\n---\n\n".join(sections)
 
 
 async def weekly_recap(ctx, bot, week=None):
